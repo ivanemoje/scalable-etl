@@ -1,0 +1,58 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Print Pipeline Status
+        run: |
+          echo "(base ci/cd) name: CI/CD Pipeline"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_CLIENT_SECRET }}
+          tags: tag:github-deployer
+
+      - name: Wait for Tailscale and verify connection
+        run: |
+          echo "Waiting for Tailscale to establish connection..."
+          sleep 15
+          tailscale status
+          ping -c 3 ${{ secrets.SERVER_IP }} || echo "Ping failed, continuing to SSH..."
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP }} 
+          username: ${{ secrets.DEPLOYER_USER }}
+          key: ${{ secrets.DEPLOYER_SSH }}
+          debug: true
+          timeout: 90s
+          command_timeout: 20m
+          script: |
+            set -ex
+            # Navigate to the project directory
+            cd ${{ secrets.FOLDER_PATH }}
+            
+            # Update the source code
+            git pull origin main
+            
+            # Orchestrate the containers using Docker Compose. Run the containers in the background
+            # todo: move to script file based on environment variable ENV_SUFFIX
+            make zap
+            
+            # Remove old, unused images to save disk space
+            docker image prune -f

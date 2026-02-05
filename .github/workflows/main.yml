@@ -42,12 +42,14 @@ jobs:
             set -ex
             cd ${{ secrets.FOLDER_PATH }}
             
-            # Update code only if it was a push; otherwise just run the daily job
             if [ "${{ github.event_name }}" = "push" ]; then
               git pull origin main
             fi
             
-            # Run the polyglot pipeline (DuckDB -> Spark -> DuckDB)
+            # Ensure infrastructure is up (binds to localhost per your config)
+            docker-compose up -d
+            
+            # Run the polyglot pipeline
             make zap
             
             docker image prune -f

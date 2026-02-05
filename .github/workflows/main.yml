@@ -5,16 +5,22 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  schedule:
+    # 01:00 AM UTC daily.
+    - cron: '0 01 * * *'
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Added 'schedule' to the allowed event names
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'schedule')
     
     steps:
       - name: Print Pipeline Status
         run: |
-          echo "(base ci/cd) name: CI/CD Pipeline"
+          echo "Triggered by: ${{ github.event_name }}"
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,33 +32,22 @@ jobs:
           oauth-secret: ${{ secrets.TAILSCALE_CLIENT_SECRET }}
           tags: tag:github-deployer
 
-      - name: Wait for Tailscale and verify connection
-        run: |
-          echo "Waiting for Tailscale to establish connection..."
-          sleep 15
-          tailscale status
-          ping -c 3 ${{ secrets.SERVER_IP }} || echo "Ping failed, continuing to SSH..."
-
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_IP }} 
           username: ${{ secrets.DEPLOYER_USER }}
           key: ${{ secrets.DEPLOYER_SSH }}
-          debug: true
-          timeout: 90s
-          command_timeout: 20m
           script: |
             set -ex
-            # Navigate to the project directory
             cd ${{ secrets.FOLDER_PATH }}
             
-            # Update the source code
-            git pull origin main
+            # Update code only if it was a push; otherwise just run the daily job
+            if [ "${{ github.event_name }}" = "push" ]; then
+              git pull origin main
+            fi
             
-            # Orchestrate the containers using Docker Compose. Run the containers in the background
-            # todo: move to script file based on environment variable ENV_SUFFIX
+            # Run the polyglot pipeline (DuckDB -> Spark -> DuckDB)
             make zap
             
-            # Remove old, unused images to save disk space
             docker image prune -f

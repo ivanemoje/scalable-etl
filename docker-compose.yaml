@@ -1,5 +1,4 @@
 services:
-  # Main Spark/Iceberg processing engine
   spark-iceberg:
     image: tabulario/spark-iceberg
     container_name: spark-iceberg-scalable
@@ -23,7 +22,6 @@ services:
       - "127.0.0.1:10002:18080"
       - "127.0.0.1:4043-4045:4040-4042"
 
-  # Automated file ingestion watcher
   ingest:
     image: python:3.9-slim
     container_name: ingest-watcher
@@ -36,18 +34,14 @@ services:
     restart: unless-stopped
     command: >
       bash -c "
-      echo 'Installing dependencies...' &&
       pip install --no-cache-dir duckdb watchdog &&
-      echo 'Starting ingestion watcher...' &&
       python src/jobs/ingest_job.py
       "
     environment:
-      # These paths are INSIDE the container
-      - DB_PATH=/app/data/outputs/scalable.db
-      - BRONZE_DIR=/app/data/outputs/bronze_listens
-      - INPUT_DIR=/app/data/inputs
+      - DB_PATH=${DB_PATH}
+      - BRONZE_DIR=${BRONZE_DIR}
+      - INPUT_DIR=${INPUT_DIR}
 
-  # Iceberg REST catalog
   rest:
     image: tabulario/iceberg-rest
     container_name: iceberg-rest-scalable
@@ -63,7 +57,6 @@ services:
       - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
       - CATALOG_S3_ENDPOINT=${CATALOG_S3_ENDPOINT}
 
-  # S3-compatible object storage
   minio:
     image: minio/minio
     container_name: minio-scalable
@@ -79,7 +72,6 @@ services:
       - "127.0.0.1:9100:9000"
     command: ["server", "/data", "--console-address", ":9001", "--address", ":9000"]
 
-  # MinIO initialization
   mc:
     depends_on:
       - minio
@@ -91,6 +83,9 @@ services:
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_REGION=${AWS_REGION}
+      - CATALOG_S3_ENDPOINT=${CATALOG_S3_ENDPOINT}
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
     entrypoint: >
       /bin/sh -c "
       until (/usr/bin/mc alias set minio ${CATALOG_S3_ENDPOINT} ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}) do echo '...waiting...' && sleep 1; done;

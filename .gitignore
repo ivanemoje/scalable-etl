@@ -147,6 +147,7 @@ dump.sql
 /txt
 *.parquet
 
-/bronze_listens/
-/silver_listens/
-/gold_exports/
+bronze_listens/
+silver_listens/
+gold_exports/
+archive/

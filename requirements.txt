@@ -1,0 +1,6 @@
+chispa
+pytest
+pyspark
+pyspark[sql]
+duckdb
+duckdb-engine

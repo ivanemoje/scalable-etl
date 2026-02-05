@@ -2,6 +2,8 @@
 
 ## Task
 
+visit [scalable.anynameworks.com](scalable.anynameworks.com) for my deep dive technical review of this task.
+
 The task is linked [here](task/scalable-test.pdf)
 
 ## Getting started
@@ -63,9 +65,8 @@ The notebook to be able to run is the `analysis.ipynb` inside the `notebooks` fo
 - **S3 Endpoint (MinIO):** `http://localhost:9100`
 
 ## Credentials
-- **Access Key:** `admin`
-- **Secret Key:** `password`
 
+Review the .env.example file
 
 ##### Environment Reset
 
@@ -80,8 +81,22 @@ The pipeline uses Github CI/CD pipelines (alternatives such as AWS Codepipline/A
 
 To deploy to production, create the infrastructure using the `Terraform` section
 
+### IAM User
+
 #### Terraform
 
 ```bash
 make terraform
 ```
+
+This will create a glue job,
+
+you will need to use the source code in `src/ingest_job_glue.py`, `src/transform_job_glue.py`, `src/daily_job_glue.py`.
+
+The IAM user `scalable` has been created with least priviledged access.
+
+Currently, policy
+
+```json
+```
+

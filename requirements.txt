@@ -4,3 +4,4 @@ pyspark
 pyspark[sql]
 duckdb
 duckdb-engine
+watchdog

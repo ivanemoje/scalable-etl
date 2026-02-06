@@ -6,32 +6,56 @@ on:
   pull_request:
     branches: [ main ]
   schedule:
-    # 01:00 AM UTC daily.
     - cron: '0 01 * * *'
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+      
+      - name: Run tests
+        run: |
+          PYTHONPATH=. pytest src/tests/ -v --cov=src/jobs --cov-report=term-missing
+      
+      - name: Upload coverage reports
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          fail_ci_if_error: false
+
   deploy:
     runs-on: ubuntu-latest
-    # Added 'schedule' to the allowed event names
+    needs: test
     if: |
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'schedule')
-    
     steps:
       - name: Print Pipeline Status
         run: |
           echo "Triggered by: ${{ github.event_name }}"
-
+      
       - name: Checkout code
         uses: actions/checkout@v4
-
+      
       - name: Connect to Tailscale
         uses: tailscale/github-action@v2
         with:
           oauth-client-id: ${{ secrets.TAILSCALE_CLIENT_ID }}
           oauth-secret: ${{ secrets.TAILSCALE_CLIENT_SECRET }}
           tags: tag:github-deployer
-
+      
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -41,15 +65,9 @@ jobs:
           script: |
             set -ex
             cd ${{ secrets.FOLDER_PATH }}
-            
             if [ "${{ github.event_name }}" = "push" ]; then
               git pull origin main
             fi
-            
-            # Ensure infrastructure is up (binds to localhost per your config)
             docker-compose up -d
-            
-            # Run the polyglot pipeline
             make zap
-            
             docker image prune -f

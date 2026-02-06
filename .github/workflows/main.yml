@@ -69,5 +69,10 @@ jobs:
               git pull origin main
             fi
             docker-compose up -d
-            make zap
+
+            # ONLY run Spark if it's the nightly schedule or we forced it
+            if [ "${{ github.event_name }}" = "schedule" ] || [[ "${{ github.event.head_commit.message }}" == *"#run-zap"* ]]; then
+              make zap
+            fi
+
             docker image prune -f

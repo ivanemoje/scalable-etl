@@ -3,7 +3,7 @@ import json
 import pytest
 import duckdb
 from unittest.mock import patch
-from ..jobs.ingest_job import process_file, get_file_hash
+from src.jobs.ingest_job import process_file, get_file_hash  # Changed from ..jobs
 
 @pytest.fixture
 def ingest_setup(tmp_path):
@@ -23,7 +23,6 @@ def ingest_setup(tmp_path):
         }
 
 def test_process_file_ingestion(ingest_setup):
-
     input_file = ingest_setup["inputs"] / "test_data.txt"
     data = {
         "user_name": "IvanEmoje",
@@ -53,7 +52,6 @@ def test_deduplication_logic(ingest_setup):
         f.write(json.dumps(content))
 
     process_file(str(input_file))
-    
     process_file(str(input_file))
 
     with duckdb.connect(ingest_setup["db"]) as con:

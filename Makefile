@@ -62,12 +62,16 @@ ingest-docker-restart:
 	@sleep 2
 	docker compose logs --tail=20 ingest
 
+# test:
+# 	@echo ">>> Validating Raw Layer (Parquet Partitioning)..."
+# 	@find $(BRONZE_PATH) -name "*.parquet" 2>/dev/null | head -n 5 || echo "No parquet files found yet"
+# 	@echo ""
+# 	@echo ">>> Validating Gold Layer (DuckDB Metadata)..."
+# 	@duckdb $(DB_PATH) "SELECT * FROM processed_files LIMIT 5;" 2>/dev/null || echo "No processed files yet"
+
 test:
-	@echo ">>> Validating Raw Layer (Parquet Partitioning)..."
-	@find $(BRONZE_PATH) -name "*.parquet" 2>/dev/null | head -n 5 || echo "No parquet files found yet"
-	@echo ""
-	@echo ">>> Validating Gold Layer (DuckDB Metadata)..."
-	@duckdb $(DB_PATH) "SELECT * FROM processed_files LIMIT 5;" 2>/dev/null || echo "No processed files yet"
+	@echo "Running unit tests..."
+	PYTHONPATH=. pytest src/tests/ -v --cov=src/jobs --cov-report=term-missing
 
 # Show pipeline status
 status:

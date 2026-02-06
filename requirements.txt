@@ -1,4 +1,5 @@
 chispa
+py4j
 pytest
 pyspark
 pyspark[sql]

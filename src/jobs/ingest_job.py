@@ -10,12 +10,10 @@ from threading import Lock
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("IngestWatcher")
 
-# Environment variables with defaults
 DB_PATH = os.environ.get("DB_PATH", "data/outputs/scalable.db")
 BRONZE_DIR = os.environ.get("BRONZE_DIR", "data/outputs/bronze_listens")
 INPUT_DIR = os.environ.get("INPUT_DIR", "data/inputs")
 
-# Thread-safe lock to prevent concurrent database access
 db_lock = Lock()
 
 def get_file_hash(filepath):
@@ -50,7 +48,6 @@ def process_file(file_path):
     # Wait to ensure file is fully written
     time.sleep(0.2)
     
-    # CRITICAL: Use thread-safe lock to prevent concurrent DB access
     with db_lock:
         # Use context manager - connection closes automatically
         with duckdb.connect(DB_PATH) as con:
@@ -103,7 +100,6 @@ class DataFolderHandler(FileSystemEventHandler):
     def on_created(self, event):
         """Handle file creation events."""
         if not event.is_directory:
-            # Prevent duplicate processing
             if event.src_path in self.processing:
                 return
             
@@ -113,7 +109,6 @@ class DataFolderHandler(FileSystemEventHandler):
             try:
                 process_file(event.src_path)
             finally:
-                # Always remove from processing set
                 self.processing.discard(event.src_path)
     
     def on_modified(self, event):
@@ -123,7 +118,6 @@ class DataFolderHandler(FileSystemEventHandler):
 
 def run_ingest():
     """Main ingestion loop."""
-    # Ensure directories exist
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     os.makedirs(BRONZE_DIR, exist_ok=True)
     os.makedirs(INPUT_DIR, exist_ok=True)

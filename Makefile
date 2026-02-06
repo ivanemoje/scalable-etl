@@ -11,7 +11,7 @@ down:
 volumes:
 	docker compose down --volumes
 
-# Original zap - runs ingestion locally (conflicts with Docker ingestion)
+# Runs ingestion locally (conflicts with Docker ingestion)
 zap-local: 
 	@# Check if the iceberg container is running
 	@docker ps | grep -q spark-iceberg-scalable || (echo "Error: Infrastructure is down. Run 'make up' first." && exit 1)
@@ -24,7 +24,6 @@ zap-local:
 	python3 src/jobs/daily_job.py
 	@pkill -f ingest_job.py || true
 
-# New zap - uses Docker ingestion (no conflicts)
 zap:
 	@# Check if containers are running
 	@docker ps | grep -q ingest-watcher || (echo "Error: Ingestion container not running. Run 'make up' first." && exit 1)
@@ -37,8 +36,8 @@ zap:
 	@echo ">>> [2/3] Transforming (Spark)..."
 	docker exec spark-iceberg-scalable spark-submit --master local[*] /home/iceberg/src/jobs/transform_job.py
 	@echo ""
-	@echo ">>> [3/3] Daily Queries (DuckDB Query API)..."
-	python3 src/jobs/daily_job.py
+	@echo ">>> [3/3] Running Daily Job (Spark)..."
+	docker exec spark-iceberg-scalable spark-submit --master local[*] /home/iceberg/src/jobs/daily_job.py
 
 # Watch ingestion logs
 logs-ingest:

@@ -1,12 +1,87 @@
 services:
+  minio:
+    image: minio/minio
+    container_name: minio-scalable
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    networks:
+      scalable_net:
+        aliases:
+          - warehouse.minio
+          - minio-scalable
+    ports:
+      - "127.0.0.1:9101:9001"
+      - "127.0.0.1:9100:9000"
+    command: ["server", "/data", "--console-address", ":9001", "--address", ":9000"]
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  mc:
+    depends_on:
+      minio:
+        condition: service_healthy
+    image: minio/mc
+    container_name: mc-scalable
+    networks:
+      - scalable_net
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - CATALOG_S3_ENDPOINT=${CATALOG_S3_ENDPOINT}
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    entrypoint: >
+      /bin/sh -c "
+      echo 'Waiting for MinIO to be ready...';
+      until (/usr/bin/mc alias set minio ${CATALOG_S3_ENDPOINT} ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}) do echo '...waiting...' && sleep 1; done;
+      echo 'Creating buckets...';
+      /usr/bin/mc mb --ignore-existing minio/warehouse;
+      /usr/bin/mc mb --ignore-existing minio/bronze;
+      /usr/bin/mc mb --ignore-existing minio/silver;
+      /usr/bin/mc mb --ignore-existing minio/gold;
+      echo 'Setting bucket policies...';
+      /usr/bin/mc anonymous set public minio/warehouse;
+      /usr/bin/mc anonymous set public minio/bronze;
+      echo 'Buckets ready!';
+      tail -f /dev/null
+      "
+    restart: unless-stopped
+
+  rest:
+    image: tabulario/iceberg-rest
+    container_name: iceberg-rest-scalable
+    networks:
+      - scalable_net
+    ports:
+      - "127.0.0.1:8182:8181"
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - CATALOG_WAREHOUSE=${CATALOG_WAREHOUSE}
+      - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
+      - CATALOG_S3_ENDPOINT=${CATALOG_S3_ENDPOINT}
+    depends_on:
+      mc:
+        condition: service_started
+
   spark-iceberg:
     image: tabulario/spark-iceberg
     container_name: spark-iceberg-scalable
     networks:
-      scalable_net:
+      - scalable_net
     depends_on:
-      - rest
-      - minio
+      rest:
+        condition: service_started
+      mc:
+        condition: service_started
     volumes:
       - ./warehouse:/home/iceberg/warehouse
       - ./notebooks:/home/iceberg/notebooks
@@ -26,7 +101,7 @@ services:
     image: python:3.9-slim
     container_name: ingest-watcher
     networks:
-      scalable_net:
+      - scalable_net
     volumes:
       - ./data:/app/data
       - ./src:/app/src
@@ -42,62 +117,9 @@ services:
       - BRONZE_DIR=${BRONZE_DIR}
       - INPUT_DIR=${INPUT_DIR}
 
-  rest:
-    image: tabulario/iceberg-rest
-    container_name: iceberg-rest-scalable
-    networks:
-      scalable_net:
-    ports:
-      - "127.0.0.1:8182:8181"
-    environment:
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_REGION=${AWS_REGION}
-      - CATALOG_WAREHOUSE=${CATALOG_WAREHOUSE}
-      - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
-      - CATALOG_S3_ENDPOINT=${CATALOG_S3_ENDPOINT}
-
-  minio:
-    image: minio/minio
-    container_name: minio-scalable
-    environment:
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
-    networks:
-      scalable_net:
-        aliases:
-          - warehouse.minio
-    ports:
-      - "127.0.0.1:9101:9001"
-      - "127.0.0.1:9100:9000"
-    command: ["server", "/data", "--console-address", ":9001", "--address", ":9000"]
-
-  mc:
-    depends_on:
-      - minio
-    image: minio/mc
-    container_name: mc-scalable
-    networks:
-      scalable_net:
-    environment:
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_REGION=${AWS_REGION}
-      - CATALOG_S3_ENDPOINT=${CATALOG_S3_ENDPOINT}
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
-    entrypoint: >
-      /bin/sh -c "
-      until (/usr/bin/mc alias set minio ${CATALOG_S3_ENDPOINT} ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}) do echo '...waiting...' && sleep 1; done;
-      /usr/bin/mc mb --ignore-existing minio/warehouse;
-      /usr/bin/mc mb --ignore-existing minio/bronze;
-      /usr/bin/mc mb --ignore-existing minio/silver;
-      /usr/bin/mc mb --ignore-existing minio/gold;
-      /usr/bin/mc anonymous set public minio/warehouse;
-      /usr/bin/mc anonymous set public minio/bronze;
-      tail -f /dev/null
-      "
-
 networks:
   scalable_net:
     driver: bridge
+
+volumes:
+  minio-data:

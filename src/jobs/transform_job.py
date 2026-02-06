@@ -34,41 +34,43 @@ def run_spark_transform():
             logger.error(f"Bronze path not found: {bronze_path}")
             sys.exit(1)
 
+        # Load from local bronze layer (DuckDB output)
         df = spark.read.parquet(bronze_path)
         
-        # Silver Layer
+        # Silver Layer: Deduplication and Schema refinement
         window_spec = Window.partitionBy("user_name", "listened_at").orderBy(F.col("listened_at").desc())
         silver_df = df.withColumn("rn", F.row_number().over(window_spec)) \
             .filter(F.col("rn") == 1).drop("rn") \
             .withColumn("listened_date", F.from_unixtime(F.col("listened_at")).cast("date")) \
-            .coalesce(1) # Reduce file count to prevent timeouts
+            .coalesce(1) 
 
-        # Gold Layer
+        # Gold Layer: Daily Top 3 counts per user
         daily_counts = silver_df.groupBy("user_name", "listened_date").count()
         gold_window = Window.partitionBy("user_name").orderBy(F.col("count").desc())
         gold_df = daily_counts.withColumn("rank", F.row_number().over(gold_window)) \
             .filter(F.col("rank") <= 3).drop("rank") \
             .coalesce(1)
 
-        # Persistence with Explicit Clean-up
-        spark.sql("CREATE NAMESPACE IF NOT EXISTS demo")
-        spark.sql("CREATE NAMESPACE IF NOT EXISTS demo.gold")
+        # Persistence Setup
+        spark.sql("CREATE NAMESPACE IF NOT EXISTS warehouse")
+        spark.sql("CREATE NAMESPACE IF NOT EXISTS warehouse.gold")
         
-        logger.info("Saving Silver...")
-        spark.sql("DROP TABLE IF EXISTS demo.silver_listens")
-        silver_df.writeTo("demo.silver_listens").create()
+        logger.info("Saving Silver Layer to Iceberg...")
+        spark.sql("DROP TABLE IF EXISTS warehouse.silver_listens")
+        silver_df.writeTo("warehouse.silver_listens").create()
         
-        logger.info("Saving Gold...")
-        spark.sql("DROP TABLE IF EXISTS demo.gold.user_peaks")
-        gold_df.writeTo("demo.gold.user_peaks").create()
+        logger.info("Saving Gold Layer to Iceberg...")
+        spark.sql("DROP TABLE IF EXISTS warehouse.gold.user_peaks")
+        gold_df.writeTo("warehouse.gold.user_peaks").create()
         
-        logger.info("-> Success!")
+        logger.info("-> Transformation Job Successful!")
 
     except Exception as e:
-        logger.error(f"Failed: {e}", exc_info=True)
+        logger.error(f"Transform Job Failed: {e}", exc_info=True)
         sys.exit(1)
     finally:
-        if 'spark' in locals(): spark.stop()
+        if 'spark' in locals(): 
+            spark.stop()
 
 if __name__ == "__main__":
     run_spark_transform()

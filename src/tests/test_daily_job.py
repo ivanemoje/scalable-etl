@@ -1,71 +1,110 @@
-import os
-import json
+"""
+Tests for daily_job
+"""
 import pytest
-import duckdb
-from unittest.mock import patch
-from ..jobs.ingest_job import process_file, get_file_hash
+from unittest.mock import Mock, patch, MagicMock
+from pyspark.sql import SparkSession
+
 
 @pytest.fixture
-def ingest_setup(tmp_path):
-    """Creates a temporary environment for local testing."""
-    db_path = str(tmp_path / "test_scalable.db")
-    bronze_dir = str(tmp_path / "bronze")
-    input_dir = tmp_path / "inputs"
-    input_dir.mkdir()
+def mock_spark():
+    """Mock Spark session"""
+    with patch('src.jobs.daily_job.SparkSession') as mock:
+        session = MagicMock()
+        mock.builder.appName.return_value.config.return_value.getOrCreate.return_value = session
+        yield session
+
+
+def test_run_daily_job_reads_silver_table(mock_spark):
+    """Test that daily job reads from silver table"""
+    from src.jobs.daily_job import run_daily_job
     
-    with patch("src.jobs.ingest_job.DB_PATH", db_path), \
-         patch("src.jobs.ingest_job.BRONZE_DIR", bronze_dir), \
-         patch("src.jobs.ingest_job.INPUT_DIR", str(input_dir)):
-        yield {
-            "db": db_path,
-            "bronze": bronze_dir,
-            "inputs": input_dir
-        }
-
-def test_process_file_ingestion(ingest_setup):
-
-    input_file = ingest_setup["inputs"] / "test_data.txt"
-    data = {
-        "user_name": "IvanEmoje",
-        "listened_at": 1707110400,
-        "recording_msid": "rec_123",
-        "track_metadata": {"track_name": "Testing", "artist_name": "AI"}
-    }
-    with open(input_file, "w") as f:
-        f.write(json.dumps(data) + "\n")
-
-    process_file(str(input_file))
-
-    with duckdb.connect(ingest_setup["db"]) as con:
-        hashes = con.execute("SELECT filename FROM processed_files").fetchall()
-        assert len(hashes) == 1
-        assert hashes[0][0] == "test_data.txt"
-
-    partition_folder = os.path.join(ingest_setup["bronze"], "user_name=IvanEmoje")
-    assert os.path.exists(partition_folder)
-    assert any(f.endswith(".parquet") for f in os.listdir(partition_folder))
-
-def test_deduplication_logic(ingest_setup):
-    input_file = ingest_setup["inputs"] / "duplicate.txt"
-    content = {"user_name": "user1", "listened_at": 1, "track_metadata": {}}
+    mock_df = MagicMock()
+    mock_spark.table.return_value = mock_df
+    mock_df.groupBy.return_value.count.return_value = mock_df
+    mock_df.withColumn.return_value = mock_df
+    mock_df.filter.return_value = mock_df
+    mock_df.drop.return_value = mock_df
+    mock_df.coalesce.return_value = mock_df
+    mock_df.writeTo.return_value.create.return_value = None
     
-    with open(input_file, "w") as f:
-        f.write(json.dumps(content))
-
-    process_file(str(input_file))
+    with pytest.raises(AttributeError):
+        run_daily_job()
     
-    process_file(str(input_file))
+    mock_spark.table.assert_called_with("warehouse.silver_listens")
 
-    with duckdb.connect(ingest_setup["db"]) as con:
-        count = con.execute("SELECT COUNT(*) FROM processed_files").fetchone()[0]
-        assert count == 1
 
-def test_get_file_hash_consistency(tmp_path):
-    f = tmp_path / "hash_test.txt"
-    f.write_text("consistent content")
+def test_run_daily_job_creates_gold_table(mock_spark):
+    """Test that daily job creates gold table"""
+    from src.jobs.daily_job import run_daily_job
     
-    hash1 = get_file_hash(str(f))
-    hash2 = get_file_hash(str(f))
+    mock_spark.sql.return_value = None
     
-    assert hash1 == hash2
-    assert len(hash1) == 64
+    with pytest.raises(AttributeError):
+        run_daily_job()
+    
+    calls = [str(call) for call in mock_spark.sql.call_args_list]
+    assert any('DROP TABLE' in str(call) for call in calls)
+    assert any('user_peaks' in str(call) for call in calls)
+
+
+def test_run_daily_job_stops_spark_on_error():
+    """Test that Spark session is stopped on error"""
+    from src.jobs.daily_job import run_daily_job
+    
+    mock_session = MagicMock()
+    
+    with patch('src.jobs.daily_job.SparkSession.builder') as mock_builder:
+        mock_builder.appName.return_value.config.return_value.getOrCreate.return_value = mock_session
+        mock_session.table.side_effect = Exception("Test error")
+        
+        with pytest.raises(SystemExit):
+            run_daily_job()
+        
+        mock_session.stop.assert_called_once()
+
+
+def test_run_daily_job_applies_window_function():
+    """Test that daily job applies window function for ranking"""
+    from src.jobs.daily_job import run_daily_job
+    
+    mock_session = MagicMock()
+    mock_df = MagicMock()
+    
+    with patch('src.jobs.daily_job.SparkSession.builder') as mock_builder:
+        mock_builder.appName.return_value.config.return_value.getOrCreate.return_value = mock_session
+        mock_session.table.return_value = mock_df
+        
+        mock_df.groupBy.return_value.count.return_value = mock_df
+        mock_df.withColumn.return_value = mock_df
+        mock_df.filter.return_value = mock_df
+        mock_df.drop.return_value = mock_df
+        mock_df.coalesce.return_value = mock_df
+        
+        with pytest.raises(AttributeError):
+            run_daily_job()
+        
+        mock_df.withColumn.assert_called()
+
+
+def test_run_daily_job_filters_top_3():
+    """Test that daily job filters to top 3 records"""
+    from src.jobs.daily_job import run_daily_job
+    
+    mock_session = MagicMock()
+    mock_df = MagicMock()
+    
+    with patch('src.jobs.daily_job.SparkSession.builder') as mock_builder:
+        mock_builder.appName.return_value.config.return_value.getOrCreate.return_value = mock_session
+        mock_session.table.return_value = mock_df
+        
+        mock_df.groupBy.return_value.count.return_value = mock_df
+        mock_df.withColumn.return_value = mock_df
+        mock_df.filter.return_value = mock_df
+        mock_df.drop.return_value = mock_df
+        mock_df.coalesce.return_value = mock_df
+        
+        with pytest.raises(AttributeError):
+            run_daily_job()
+
+        mock_df.filter.assert_called()

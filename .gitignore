@@ -2,6 +2,7 @@
 
 flink-env.env
 postgres-data
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -151,3 +152,7 @@ bronze_listens/
 silver_listens/
 gold_exports/
 archive/
+
+*.DS_Store
+
+.research/

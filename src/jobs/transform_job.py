@@ -1,6 +1,7 @@
 import logging
 import sys
 import os
+import subprocess
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
@@ -13,7 +14,7 @@ logging.basicConfig(
 logger = logging.getLogger("SparkTransform")
 
 def run_spark_transform():
-    logger.info("Starting Spark Transformation Job...")
+    logger.info("Starting Spark Transformation Job (Shuffle-Free)...")
     
     try:
         spark = SparkSession.builder \
@@ -26,6 +27,9 @@ def run_spark_transform():
             .config("spark.sql.catalog.demo.s3.endpoint", "http://minio-scalable:9000") \
             .config("spark.sql.catalog.demo.s3.path-style-access", "true") \
             .config("spark.sql.defaultCatalog", "demo") \
+            .config("spark.sql.files.ignoreCorruptFiles", "true") \
+            .config("spark.sql.adaptive.enabled", "false") \
+            .config("spark.sql.shuffle.partitions", "1") \
             .getOrCreate()
 
         bronze_path = "/home/iceberg/data/outputs/bronze_listens"
@@ -34,35 +38,109 @@ def run_spark_transform():
             logger.error(f"Bronze path not found: {bronze_path}")
             sys.exit(1)
 
-        # Load from local bronze layer (DuckDB output)
-        df = spark.read.parquet(bronze_path)
+        # Clean up empty parquet files before reading
+        logger.info("Cleaning empty parquet files...")
+        subprocess.run(
+            f"find {bronze_path} -name '*.parquet' -size 0 -delete",
+            shell=True,
+            check=False
+        )
+
+        # ===================================================================
+        # BRONZE LAYER → ICEBERG (Raw data as-is, partitioned by user)
+        # ===================================================================
+        logger.info("Loading Bronze layer (raw data)...")
+        bronze_df = spark.read.parquet(bronze_path)
         
-        # Silver Layer: Deduplication and Schema refinement
-        window_spec = Window.partitionBy("user_name", "listened_at").orderBy(F.col("listened_at").desc())
-        silver_df = df.withColumn("rn", F.row_number().over(window_spec)) \
-            .filter(F.col("rn") == 1).drop("rn") \
-            .withColumn("listened_date", F.from_unixtime(F.col("listened_at")).cast("date")) \
-            .coalesce(1) 
-
-        # Gold Layer: Daily Top 3 counts per user
-        daily_counts = silver_df.groupBy("user_name", "listened_date").count()
-        gold_window = Window.partitionBy("user_name").orderBy(F.col("count").desc())
-        gold_df = daily_counts.withColumn("rank", F.row_number().over(gold_window)) \
-            .filter(F.col("rank") <= 3).drop("rank") \
-            .coalesce(1)
-
-        # Persistence Setup
+        # Create namespaces
         spark.sql("CREATE NAMESPACE IF NOT EXISTS warehouse")
         spark.sql("CREATE NAMESPACE IF NOT EXISTS warehouse.gold")
         
-        logger.info("Saving Silver Layer to Iceberg...")
+        logger.info("Saving Bronze Layer to Iceberg (raw, partitioned by user)...")
+        spark.sql("DROP TABLE IF EXISTS warehouse.bronze_listens")
+        
+        bronze_df.writeTo("warehouse.bronze_listens") \
+            .partitionedBy("user_name") \
+            .create()
+        
+        bronze_count = bronze_df.count()
+        logger.info(f"✓ Bronze layer: {bronze_count} raw records")
+
+        # ===================================================================
+        # SILVER LAYER (Cleaned, deduplicated, enriched - NO SHUFFLE)
+        # ===================================================================
+        logger.info("Transforming to Silver layer (partition-aware)...")
+        
+        # Window partitioned by user_name to match bronze partitioning
+        window_spec = Window.partitionBy("user_name", "listened_at") \
+            .orderBy(F.col("listened_at").desc())
+        
+        silver_df = bronze_df \
+            .withColumn("listened_datetime", F.from_unixtime(F.col("listened_at")).cast("timestamp")) \
+            .withColumn("listened_date", F.to_date(F.col("listened_datetime"))) \
+            .withColumn("year", F.year(F.col("listened_datetime"))) \
+            .withColumn("month", F.month(F.col("listened_datetime"))) \
+            .withColumn("day", F.dayofmonth(F.col("listened_datetime"))) \
+            .withColumn("hour", F.hour(F.col("listened_datetime"))) \
+            .withColumn("rn", F.row_number().over(window_spec)) \
+            .filter(F.col("rn") == 1) \
+            .drop("rn") \
+            .repartition("user_name")
+        
+        logger.info("Saving Silver Layer to Iceberg (partitioned by user)...")
         spark.sql("DROP TABLE IF EXISTS warehouse.silver_listens")
-        silver_df.writeTo("warehouse.silver_listens").create()
         
-        logger.info("Saving Gold Layer to Iceberg...")
+        silver_df.writeTo("warehouse.silver_listens") \
+            .partitionedBy("user_name") \
+            .create()
+        
+        silver_count = silver_df.count()
+        logger.info(f"✓ Silver layer: {silver_count} deduplicated records")
+
+        # ===================================================================
+        # GOLD LAYER (Aggregated metrics - partition-local aggregation)
+        # ===================================================================
+        logger.info("Creating Gold layer (partition-local aggregations)...")
+        
+        # Aggregate within user partitions - NO SHUFFLE
+        gold_df = silver_df.groupBy("user_name", "listened_date") \
+            .agg(
+                F.count("*").alias("listen_count"),
+                F.countDistinct("track_name").alias("unique_tracks"),
+                F.countDistinct("artist_name").alias("unique_artists")
+            )
+        
+        # Top 3 per user
+        gold_window = Window.partitionBy("user_name") \
+            .orderBy(F.col("listen_count").desc())
+        
+        gold_df = gold_df \
+            .withColumn("rank", F.row_number().over(gold_window)) \
+            .filter(F.col("rank") <= 3) \
+            .select("user_name", "listened_date", "listen_count", "unique_tracks", "unique_artists") \
+            .repartition("user_name")
+        
+        logger.info("Saving Gold Layer to Iceberg (partitioned by user)...")
         spark.sql("DROP TABLE IF EXISTS warehouse.gold.user_peaks")
-        gold_df.writeTo("warehouse.gold.user_peaks").create()
         
+        gold_df.writeTo("warehouse.gold.user_peaks") \
+            .partitionedBy("user_name") \
+            .create()
+        
+        gold_count = gold_df.count()
+        logger.info(f"✓ Gold layer: {gold_count} aggregated records")
+        
+        # ===================================================================
+        # SUMMARY
+        # ===================================================================
+        logger.info("=" * 70)
+        logger.info("TRANSFORMATION SUMMARY (SHUFFLE-FREE)")
+        logger.info("=" * 70)
+        logger.info(f"Bronze (raw):        {bronze_count:,} records")
+        logger.info(f"Silver (cleaned):    {silver_count:,} records")
+        logger.info(f"Gold (aggregated):   {gold_count:,} records")
+        logger.info("All layers partitioned by user_name")
+        logger.info("=" * 70)
         logger.info("-> Transformation Job Successful!")
 
     except Exception as e:

@@ -4,7 +4,7 @@
 
 visit [scalable.anynameworks.com](scalable.anynameworks.com) for my deep dive technical review of this task.
 
-The task is linked [here](task/scalable-test.pdf)
+The task is linked [here](resources/task/scalable-test.pdf)
 
 ## Getting started
 
@@ -28,6 +28,8 @@ Running `pip install -r requirements.txt` will install them.
 
 Running the pytest is easy. You need to run `python -m pytest` and you're good to go.
 
+The [Docker](#docker) deployment is encouraged to cater for any potential environment mismatches.
+
 #### Docker
 
 To launch the Spark and Iceberg Docker containers, run:
@@ -36,14 +38,15 @@ To launch the Spark and Iceberg Docker containers, run:
 make up
 ```
 
-Or `docker compose up` if you're on Windows!
+Or `docker compose up` if you're on Windows.
 
-Start the job
+If you are on MacOS, you might need to install [colima](https://github.com/abiosoft/colima) in order to use docke.
+
+Start the jobs
 
 ```bash
-make zap
+make jobs
 ```
-
 
 
 Then, you should be able to access a Jupyter notebook at []`localhost:8889`](http://127.0.0.1:8889/tree?) (or what environment vairbale you set)
@@ -79,18 +82,21 @@ Review the .env.example file
 
 #### Testing
 
-You can manually upload a file into the `data/inputs` and check minio/S3 or the outputs via docker or the output files
+You can manually upload a file into the `data/inputs` OR in `[S3/MinIO](s3://input-data/)` and check minio/S3 or the outputs via docker or the output files.
+
+Run `make jobs`.
 
 ##### Environment Reset
 
 To clear your environment and reset Docker volumes, use:
 ```bash
-make volumes
+make .zap
 ```
 
 #### Deployment
 
 The pipeline uses Github CI/CD pipelines (alternatives such as AWS Codepipline/Azure DevOps).
+
 
 To deploy to production, create the infrastructure using the `Terraform` section
 
@@ -102,18 +108,13 @@ To deploy to production, create the infrastructure using the `Terraform` section
 make terraform
 ```
 
-This will create a glue job,
+This will create a glue job and the buckets needed to perform the task. The source code in `src/ingest_job_glue.py`, `src/transform_job_glue.py`, `src/daily_job_glue.py` is to be used.
 
-you will need to use the source code in `src/ingest_job_glue.py`, `src/transform_job_glue.py`, `src/daily_job_glue.py`.
+The IAM user `scalable` has been created with least priviledged access and the base infrastrucure definitions are in the `terraform` folder.
 
-The IAM user `scalable` has been created with least priviledged access.
+Current AWS policy 
 
-Currently, policy
-
-
-The IAM user `scalable` has been created with least priviledged access.
-
-Current AWS policy
+(todo: add lifecycle for s3)
 
 ```json
 # S3 Module
@@ -181,3 +182,13 @@ resource "aws_glue_job" "etl_job" {
 }
 ```
 
+## Architecture
+
+In its current state it is a hybrid, relying on Github (CI/CD) and a private server. It is however AWS capable. 
+
+
+![Alt text](./assets/images/01-high-level-architecture.png)
+
+## Todos
+
+- Add autotrigger for `make jobs` and run in daemon

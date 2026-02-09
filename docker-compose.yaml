@@ -6,10 +6,7 @@ services:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
     networks:
-      scalable_net:
-        aliases:
-          - warehouse.minio
-          - minio-scalable
+      - scalable_net
     ports:
       - "127.0.0.1:9101:9001"
       - "127.0.0.1:9100:9000"
@@ -46,9 +43,11 @@ services:
       /usr/bin/mc mb --ignore-existing minio/bronze;
       /usr/bin/mc mb --ignore-existing minio/silver;
       /usr/bin/mc mb --ignore-existing minio/gold;
+      /usr/bin/mc mb --ignore-existing minio/input-data;
       echo 'Setting bucket policies...';
       /usr/bin/mc anonymous set public minio/warehouse;
       /usr/bin/mc anonymous set public minio/bronze;
+      /usr/bin/mc anonymous set public minio/input-data;
       echo 'Buckets ready!';
       tail -f /dev/null
       "
@@ -68,6 +67,13 @@ services:
       - CATALOG_WAREHOUSE=${CATALOG_WAREHOUSE}
       - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
       - CATALOG_S3_ENDPOINT=${CATALOG_S3_ENDPOINT}
+      - CATALOG_S3_PATH__STYLE__ACCESS=true
+      - CATALOG_CATALOG__IMPL=org.apache.iceberg.jdbc.JdbcCatalog
+      - CATALOG_URI=jdbc:sqlite:file:/tmp/iceberg-rest-catalog.db
+      - CATALOG_JDBC_USER=user
+      - CATALOG_JDBC_PASSWORD=password
+    volumes:
+      - iceberg-rest-data:/tmp
     depends_on:
       mc:
         condition: service_started
@@ -102,6 +108,9 @@ services:
     container_name: ingest-watcher
     networks:
       - scalable_net
+    depends_on:
+      minio:
+        condition: service_healthy
     volumes:
       - ./data:/app/data
       - ./src:/app/src
@@ -109,13 +118,19 @@ services:
     restart: unless-stopped
     command: >
       bash -c "
-      pip install --no-cache-dir duckdb watchdog &&
+      pip install --no-cache-dir duckdb watchdog boto3 &&
       python src/jobs/ingest_job.py
       "
     environment:
       - DB_PATH=${DB_PATH}
       - BRONZE_DIR=${BRONZE_DIR}
       - INPUT_DIR=${INPUT_DIR}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - S3_ENDPOINT=http://minio-scalable:9000
+      - S3_INPUT_BUCKET=${S3_INPUT_BUCKET:-input-data}
+      - S3_POLL_INTERVAL=${S3_POLL_INTERVAL:-30}
 
 networks:
   scalable_net:
@@ -123,3 +138,4 @@ networks:
 
 volumes:
   minio-data:
+  iceberg-rest-data:

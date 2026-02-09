@@ -1,4 +1,5 @@
 chispa
+python-dotenv
 py4j
 pytest
 pyspark

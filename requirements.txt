@@ -1,3 +1,4 @@
+boto3
 chispa
 python-dotenv
 py4j

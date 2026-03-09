@@ -2,9 +2,8 @@
 
 ## Task
 
-visit [scalable.anynameworks.com](scalable.anynameworks.com) for my deep dive technical review of this task.
+visit [anynameworks.com](#) for my deep dive technical review.
 
-The task is linked [here](resources/task/scalable-test.pdf)
 
 ## Getting started
 
